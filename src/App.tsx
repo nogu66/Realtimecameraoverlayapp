@@ -360,29 +360,29 @@ export default function App() {
         lastLogTime = now;
       }
 
-      // Draw debug rectangles for face detection (always visible for debugging)
-      if (currentDetections.length > 0) {
-        ctx.strokeStyle = '#00ff00'; // Green for detected faces
-        ctx.lineWidth = 2;
-
-        currentDetections.forEach((detection: any) => {
-          const bbox = detection.boundingBox;
-          if (bbox) {
-            // Draw detection bounding box
-            ctx.strokeRect(bbox.originX, bbox.originY, bbox.width, bbox.height);
-
-            // Draw scaled overlay area
-            const scaleFactor = 2.0;
-            const scaledWidth = bbox.width * scaleFactor;
-            const scaledHeight = bbox.height * scaleFactor;
-            const x = bbox.originX - (scaledWidth - bbox.width) / 2;
-            const y = bbox.originY - (scaledHeight - bbox.height) / 2;
-
-            ctx.strokeStyle = '#ff00ff'; // Magenta for overlay area
-            ctx.strokeRect(x, y, scaledWidth, scaledHeight);
-          }
-        });
-      }
+      // // Draw debug rectangles for face detection (useful while tuning overlay alignment)
+      // if (currentDetections.length > 0) {
+      //   ctx.strokeStyle = '#00ff00'; // Green for detected faces
+      //   ctx.lineWidth = 2;
+      //
+      //   currentDetections.forEach((detection: any) => {
+      //     const bbox = detection.boundingBox;
+      //     if (bbox) {
+      //       // Draw detection bounding box
+      //       ctx.strokeRect(bbox.originX, bbox.originY, bbox.width, bbox.height);
+      //
+      //       // Draw scaled overlay area
+      //       const scaleFactor = 2.0;
+      //       const scaledWidth = bbox.width * scaleFactor;
+      //       const scaledHeight = bbox.height * scaleFactor;
+      //       const x = bbox.originX - (scaledWidth - bbox.width) / 2;
+      //       const y = bbox.originY - (scaledHeight - bbox.height) / 2;
+      //
+      //       ctx.strokeStyle = '#ff00ff'; // Magenta for overlay area
+      //       ctx.strokeRect(x, y, scaledWidth, scaledHeight);
+      //     }
+      //   });
+      // }
 
       if (processedCanvas && currentDetections.length > 0) {
         let drawCount = 0;
