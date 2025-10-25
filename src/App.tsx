@@ -108,46 +108,76 @@ export default function App() {
     };
   }, [isCameraReady, detectFaces]);
 
-  // Generate image using nanobanana API
+  // Generate image using Weaver AI (Google Gemini 2.5 Flash Image) API
   const handleGenerateImage = async () => {
     if (!prompt.trim()) return;
 
     setIsGenerating(true);
+    console.log('🎨 Starting image generation with prompt:', prompt);
+
     try {
-      // デモモード: ローカルのダミー画像を使用
-      // 本番環境では以下のコメントを解除してnanobanana APIを使用してください
+      const apiKey = import.meta.env.VITE_WEAVER_AI_API_KEY;
 
-      // nanobanana API呼び出し
-      // const response = await fetch('https://api.nanobanana.com/v1/generate', {
-      //   method: 'POST',
-      //   headers: {
-      //     'Content-Type': 'application/json',
-      //     'Authorization': 'Bearer YOUR_API_KEY'
-      //   },
-      //   body: JSON.stringify({
-      //     prompt: prompt,
-      //     width: 512,
-      //     height: 512
-      //   })
-      // });
-      //
-      // if (!response.ok) {
-      //   throw new Error('Failed to generate image');
-      // }
-      //
-      // const data = await response.json();
-      // setGeneratedImage(data.image_url || data.url);
+      if (!apiKey) {
+        throw new Error('VITE_WEAVER_AI_API_KEY is not set in environment variables');
+      }
 
-      // デモ用: ローカル画像を使用
-      await new Promise(resolve => setTimeout(resolve, 1500)); // 生成をシミュレート
-      setGeneratedImage('/dummy-overlay.jpg');
+      console.log('🔑 API Key found, making request...');
+
+      // Enhance prompt for face overlay with green screen background
+      const enhancedPrompt = `A close-up portrait of a ${prompt} face, front-facing view, centered, isolated subject on a bright green chroma key background (#00FF00), vivid green screen, face mask style, suitable for face overlay filter`;
+
+      console.log('✨ Enhanced prompt:', enhancedPrompt);
+
+      const requestBody = {
+        prompt: enhancedPrompt,
+        aspect_ratio: '1:1',
+        output_format: 'png',
+        enable_sync_mode: true
+      };
+
+      console.log('📤 Request body:', requestBody);
+
+      const response = await fetch('https://api.wavespeed.ai/api/v3/google/gemini-2.5-flash-image/text-to-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      console.log('📥 Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ API error response:', errorData);
+        throw new Error(`API request failed: ${response.status} ${response.statusText}. ${JSON.stringify(errorData)}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ API response data:', data);
+
+      // Check if the generation was successful
+      if (data.data && data.data.outputs && data.data.outputs.length > 0) {
+        const imageUrl = data.data.outputs[0];
+        console.log('🖼️ Setting generated image URL:', imageUrl);
+        setGeneratedImage(imageUrl);
+      } else if (data.data && data.data.status === 'failed') {
+        console.error('❌ Server-side generation failed:', data.data);
+        throw new Error('Image generation failed on the server');
+      } else {
+        console.error('❌ Unexpected response structure:', data);
+        throw new Error('No image URL in response');
+      }
     } catch (error) {
-      console.error('Image generation error:', error);
+      console.error('💥 Image generation error:', error);
       // フォールバック: デモ用のダミー画像
-      alert('画像生成APIに接続できませんでした。ダミー画像を使用します。');
+      alert(`画像生成APIでエラーが発生しました: ${error instanceof Error ? error.message : 'Unknown error'}。ダミー画像を使用します。`);
       setGeneratedImage('/dummy-overlay.jpg');
     } finally {
       setIsGenerating(false);
+      console.log('🏁 Image generation process completed');
     }
   };
 
@@ -157,18 +187,72 @@ export default function App() {
     const video = videoRef.current;
 
     if (!canvas || !video) {
+      console.log('⚠️ Canvas or video not available');
       return;
     }
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      console.log('⚠️ Could not get canvas context');
+      return;
+    }
 
-    // Load generated image once
-    let overlayImg: HTMLImageElement | null = null;
+    console.log('🖼️ Setting up overlay with generatedImage:', generatedImage);
+    console.log('👤 Current face detections:', faceDetections.length);
+
+    // Load generated image once and process green screen
+    let processedCanvas: HTMLCanvasElement | null = null;
     if (generatedImage) {
-      overlayImg = new Image();
+      const overlayImg = new Image();
       overlayImg.crossOrigin = 'anonymous';
+
+      overlayImg.onload = () => {
+        console.log('✅ Overlay image loaded successfully:', generatedImage);
+
+        // Create a temporary canvas to process the image
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+
+        if (tempCtx) {
+          tempCanvas.width = overlayImg.width;
+          tempCanvas.height = overlayImg.height;
+
+          // Draw original image
+          tempCtx.drawImage(overlayImg, 0, 0);
+
+          // Get image data
+          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          const data = imageData.data;
+
+          // Process pixels: make green background transparent
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+
+            // Detect green color (adjust thresholds as needed)
+            // Check if green is dominant and red/blue are low
+            if (g > 100 && g > r * 1.5 && g > b * 1.5) {
+              // Make pixel transparent
+              data[i + 3] = 0;
+            }
+          }
+
+          // Put processed image data back
+          tempCtx.putImageData(imageData, 0, 0);
+          processedCanvas = tempCanvas;
+
+          console.log('🎨 Green screen removed successfully');
+        }
+      };
+
+      overlayImg.onerror = (error) => {
+        console.error('❌ Failed to load overlay image:', error);
+        console.error('Image URL:', generatedImage);
+      };
+
       overlayImg.src = generatedImage;
+      console.log('📥 Starting to load overlay image:', generatedImage);
     }
 
     // Animation loop for drawing overlays
@@ -182,18 +266,18 @@ export default function App() {
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Draw image on each detected face
-      if (overlayImg && overlayImg.complete && faceDetections.length > 0) {
+      // Draw processed image on each detected face
+      if (processedCanvas && faceDetections.length > 0) {
         faceDetections.forEach((detection: any) => {
           const bbox = detection.boundingBox;
-          if (bbox) {
-            // Scale and draw image to fit face
+          if (bbox && processedCanvas) {
+            // Scale and draw processed image to fit face
             const x = bbox.originX;
             const y = bbox.originY;
             const width = bbox.width;
             const height = bbox.height;
 
-            ctx.drawImage(overlayImg, x, y, width, height);
+            ctx.drawImage(processedCanvas, x, y, width, height);
           }
         });
       }
@@ -275,10 +359,35 @@ export default function App() {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="flex items-center gap-3"
+          className="flex items-center justify-between gap-3"
         >
-          <Sparkles className="w-7 h-7 text-[#00AEEF]" />
-          <h1 className="text-white tracking-wide">AI Camera Filter</h1>
+          <div className="flex items-center gap-3">
+            <Sparkles className="w-7 h-7 text-[#00AEEF]" />
+            <h1 className="text-white tracking-wide">AI Camera Filter</h1>
+          </div>
+
+          {/* Generated Image Preview */}
+          {generatedImage && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3 }}
+              className="relative"
+            >
+              <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#00AEEF] bg-black/50 backdrop-blur-sm">
+                <img
+                  src={generatedImage}
+                  alt="Generated overlay"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    console.error('Preview image failed to load');
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              </div>
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#00AEEF] rounded-full animate-pulse" />
+            </motion.div>
+          )}
         </motion.div>
       </div>
 
@@ -297,7 +406,7 @@ export default function App() {
                 value={prompt}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
                 onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleGenerateImage()}
-                placeholder="プロンプトを入力…"
+                placeholder="例: 猫、犬、パンダ、ロボット…"
                 className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
               />
             </div>
@@ -341,10 +450,10 @@ export default function App() {
             className="text-white/70 text-center text-sm px-4"
           >
             {isGenerating
-              ? '画像生成中...'
+              ? 'AI画像を生成中...'
               : generatedImage
-              ? '顔を検出してオーバーレイ中...'
-              : 'プロンプトを入力してボタンを押すと画像生成'}
+              ? '顔にオーバーレイ中 - カメラに顔を向けてください'
+              : '動物や物の名前を入力して顔フィルターを生成'}
           </motion.p>
         </motion.div>
       </div>
