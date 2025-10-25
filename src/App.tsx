@@ -279,14 +279,18 @@ export default function App() {
         faceDetections.forEach((detection: any, index: number) => {
           const bbox = detection.boundingBox;
           if (bbox) {
-            // Scale and draw processed image to fit face
-            const x = bbox.originX;
-            const y = bbox.originY;
-            const width = bbox.width;
-            const height = bbox.height;
+            // Scale factor to ensure face is completely covered
+            const scaleFactor = 2.0; // 1.8x larger to fully cover the face
 
-            console.log(`Face ${index}: x=${x}, y=${y}, w=${width}, h=${height}`);
-            ctx.drawImage(processedCanvas, x, y, width, height);
+            const scaledWidth = bbox.width * scaleFactor;
+            const scaledHeight = bbox.height * scaleFactor;
+
+            // Center the scaled image on the face
+            const x = bbox.originX - (scaledWidth - bbox.width) / 2;
+            const y = bbox.originY - (scaledHeight - bbox.height) / 2;
+
+            console.log(`Face ${index}: original=${bbox.width}x${bbox.height}, scaled=${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`);
+            ctx.drawImage(processedCanvas, x, y, scaledWidth, scaledHeight);
           }
         });
       } else if (!processedCanvas && generatedImage) {
