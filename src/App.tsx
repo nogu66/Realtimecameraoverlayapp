@@ -1,21 +1,51 @@
-import { useState, useRef, useEffect } from 'react';
-import { Camera, Sparkles } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Camera, Sparkles, Wand2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from './components/ui/input';
 import { Button } from './components/ui/button';
 import { ImageWithFallback } from './components/figma/ImageWithFallback';
+import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [useFallback, setUseFallback] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [overlayEffect, setOverlayEffect] = useState('');
+  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [faceDetections, setFaceDetections] = useState<any[]>([]);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const faceDetectorRef = useRef<FaceDetector | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
+  // Initialize MediaPipe Face Detector
   useEffect(() => {
-    // Initialize camera
+    const initFaceDetector = async () => {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+        );
+        const detector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO'
+        });
+        faceDetectorRef.current = detector;
+      } catch (error) {
+        console.error('Failed to initialize face detector:', error);
+      }
+    };
+
+    initFaceDetector();
+  }, []);
+
+  // Initialize camera
+  useEffect(() => {
     const startCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -41,25 +71,142 @@ export default function App() {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
         tracks.forEach(track => track.stop());
       }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
   }, []);
 
-  useEffect(() => {
-    // Simulate AI overlay effect based on prompt
-    if (prompt.toLowerCase().includes('スパイダーマン') || prompt.toLowerCase().includes('spider')) {
-      setOverlayEffect('spiderman');
-    } else if (prompt.toLowerCase().includes('ネコ') || prompt.toLowerCase().includes('猫') || prompt.toLowerCase().includes('cat')) {
-      setOverlayEffect('cat');
-    } else if (prompt.toLowerCase().includes('ロボット') || prompt.toLowerCase().includes('robot')) {
-      setOverlayEffect('robot');
-    } else if (prompt.toLowerCase().includes('宇宙') || prompt.toLowerCase().includes('space')) {
-      setOverlayEffect('space');
-    } else if (prompt) {
-      setOverlayEffect('generic');
-    } else {
-      setOverlayEffect('');
+  // Face detection loop
+  const detectFaces = useCallback(async () => {
+    if (!faceDetectorRef.current || !videoRef.current || !isCameraReady || useFallback) {
+      animationFrameRef.current = requestAnimationFrame(detectFaces);
+      return;
     }
-  }, [prompt]);
+
+    const video = videoRef.current;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      try {
+        const detections = faceDetectorRef.current.detectForVideo(video, performance.now());
+        setFaceDetections(detections.detections || []);
+      } catch (error) {
+        console.error('Face detection error:', error);
+      }
+    }
+
+    animationFrameRef.current = requestAnimationFrame(detectFaces);
+  }, [isCameraReady, useFallback]);
+
+  useEffect(() => {
+    if (isCameraReady && faceDetectorRef.current) {
+      detectFaces();
+    }
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isCameraReady, detectFaces]);
+
+  // Generate image using nanobanana API
+  const handleGenerateImage = async () => {
+    if (!prompt.trim()) return;
+
+    setIsGenerating(true);
+    try {
+      // デモモード: ローカルのダミー画像を使用
+      // 本番環境では以下のコメントを解除してnanobanana APIを使用してください
+
+      // nanobanana API呼び出し
+      // const response = await fetch('https://api.nanobanana.com/v1/generate', {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //     'Authorization': 'Bearer YOUR_API_KEY'
+      //   },
+      //   body: JSON.stringify({
+      //     prompt: prompt,
+      //     width: 512,
+      //     height: 512
+      //   })
+      // });
+      //
+      // if (!response.ok) {
+      //   throw new Error('Failed to generate image');
+      // }
+      //
+      // const data = await response.json();
+      // setGeneratedImage(data.image_url || data.url);
+
+      // デモ用: ローカル画像を使用
+      await new Promise(resolve => setTimeout(resolve, 1500)); // 生成をシミュレート
+      setGeneratedImage('/dummy-overlay.jpg');
+    } catch (error) {
+      console.error('Image generation error:', error);
+      // フォールバック: デモ用のダミー画像
+      alert('画像生成APIに接続できませんでした。ダミー画像を使用します。');
+      setGeneratedImage('/dummy-overlay.jpg');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Draw overlay on detected faces
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const video = videoRef.current;
+
+    if (!canvas || !video) {
+      return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Load generated image once
+    let overlayImg: HTMLImageElement | null = null;
+    if (generatedImage) {
+      overlayImg = new Image();
+      overlayImg.crossOrigin = 'anonymous';
+      overlayImg.src = generatedImage;
+    }
+
+    // Animation loop for drawing overlays
+    const drawLoop = () => {
+      // Match canvas size to video
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth || video.offsetWidth;
+        canvas.height = video.videoHeight || video.offsetHeight;
+      }
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw image on each detected face
+      if (overlayImg && overlayImg.complete && faceDetections.length > 0) {
+        faceDetections.forEach((detection: any) => {
+          const bbox = detection.boundingBox;
+          if (bbox) {
+            // Scale and draw image to fit face
+            const x = bbox.originX;
+            const y = bbox.originY;
+            const width = bbox.width;
+            const height = bbox.height;
+
+            ctx.drawImage(overlayImg, x, y, width, height);
+          }
+        });
+      }
+
+      requestAnimationFrame(drawLoop);
+    };
+
+    const animId = requestAnimationFrame(drawLoop);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [faceDetections, generatedImage]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
@@ -72,7 +219,7 @@ export default function App() {
         ctx.drawImage(video, 0, 0);
         const imageData = canvas.toDataURL('image/png');
         setCapturedImage(imageData);
-        
+
         // Reset after 2 seconds
         setTimeout(() => setCapturedImage(null), 2000);
       }
@@ -103,87 +250,12 @@ export default function App() {
       {/* Hidden canvas for capture */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* AI Overlay Effects */}
-      <AnimatePresence>
-        {overlayEffect && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="absolute inset-0 pointer-events-none"
-          >
-            {overlayEffect === 'spiderman' && (
-              <div className="absolute inset-0 bg-gradient-to-b from-red-600/30 via-transparent to-blue-900/30">
-                <div className="absolute inset-0" style={{
-                  backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 35px, rgba(255,255,255,0.1) 35px, rgba(255,255,255,0.1) 36px), repeating-linear-gradient(90deg, transparent, transparent 35px, rgba(255,255,255,0.1) 35px, rgba(255,255,255,0.1) 36px)'
-                }} />
-              </div>
-            )}
-            {overlayEffect === 'cat' && (
-              <div className="absolute inset-0">
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 flex gap-20">
-                  <motion.div
-                    animate={{ rotate: [-5, 5, -5] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="w-0 h-0 border-l-[40px] border-l-transparent border-r-[40px] border-r-transparent border-b-[80px] border-b-pink-400/70"
-                    style={{ filter: 'drop-shadow(0 0 10px rgba(236, 72, 153, 0.5))' }}
-                  />
-                  <motion.div
-                    animate={{ rotate: [5, -5, 5] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="w-0 h-0 border-l-[40px] border-l-transparent border-r-[40px] border-r-transparent border-b-[80px] border-b-pink-400/70"
-                    style={{ filter: 'drop-shadow(0 0 10px rgba(236, 72, 153, 0.5))' }}
-                  />
-                </div>
-              </div>
-            )}
-            {overlayEffect === 'robot' && (
-              <div className="absolute inset-0 bg-cyan-500/20">
-                <div className="absolute inset-0" style={{
-                  backgroundImage: 'linear-gradient(rgba(0, 255, 255, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 255, 255, 0.1) 1px, transparent 1px)',
-                  backgroundSize: '20px 20px'
-                }} />
-                <motion.div
-                  animate={{ scaleX: [0, 1, 0] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute top-1/3 left-0 w-full h-[2px] bg-cyan-400 shadow-[0_0_10px_rgba(0,255,255,0.8)]"
-                />
-              </div>
-            )}
-            {overlayEffect === 'space' && (
-              <div className="absolute inset-0 bg-gradient-to-b from-purple-900/40 via-blue-900/40 to-black/40">
-                {[...Array(20)].map((_, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, scale: 0 }}
-                    animate={{ 
-                      opacity: [0, 1, 0],
-                      scale: [0, 1, 0.5],
-                      x: Math.random() * window.innerWidth,
-                      y: Math.random() * window.innerHeight
-                    }}
-                    transition={{
-                      duration: 2 + Math.random() * 2,
-                      repeat: Infinity,
-                      delay: Math.random() * 2
-                    }}
-                    className="absolute w-2 h-2 bg-white rounded-full"
-                    style={{ filter: 'blur(1px)' }}
-                  />
-                ))}
-              </div>
-            )}
-            {overlayEffect === 'generic' && (
-              <motion.div
-                animate={{ opacity: [0.3, 0.6, 0.3] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                className="absolute inset-0 bg-gradient-to-br from-[#00AEEF]/30 via-transparent to-purple-500/30"
-              />
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Overlay canvas for face detection */}
+      <canvas
+        ref={overlayCanvasRef}
+        className="absolute inset-0 w-full h-full pointer-events-none"
+        style={{ objectFit: 'cover' }}
+      />
 
       {/* Capture Flash Effect */}
       <AnimatePresence>
@@ -218,23 +290,33 @@ export default function App() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="flex flex-col items-center gap-6"
         >
-          {/* Text Input */}
-          <div className="w-full max-w-md relative">
-            <Input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="プロンプトを入力…"
-              className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
-            />
-            {prompt && (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2"
-              >
-                <Sparkles className="w-5 h-5 text-[#00AEEF]" />
-              </motion.div>
-            )}
+          {/* Text Input with Generate Button */}
+          <div className="w-full max-w-md relative flex gap-3">
+            <div className="relative flex-1">
+              <Input
+                value={prompt}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
+                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleGenerateImage()}
+                placeholder="プロンプトを入力…"
+                className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
+              />
+            </div>
+            <Button
+              onClick={handleGenerateImage}
+              disabled={!prompt.trim() || isGenerating}
+              className="rounded-full bg-[#00AEEF] hover:bg-[#00AEEF]/80 text-white px-6 py-6 h-auto disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isGenerating ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                >
+                  <Wand2 className="w-5 h-5" />
+                </motion.div>
+              ) : (
+                <Wand2 className="w-5 h-5" />
+              )}
+            </Button>
           </div>
 
           {/* Capture Button */}
@@ -255,10 +337,14 @@ export default function App() {
           {/* Helper Text */}
           <motion.p
             initial={{ opacity: 0 }}
-            animate={{ opacity: prompt ? 1 : 0.5 }}
+            animate={{ opacity: 1 }}
             className="text-white/70 text-center text-sm px-4"
           >
-            {prompt ? 'AIがリアルタイムで変換中...' : 'プロンプトを入力してフィルターを適用'}
+            {isGenerating
+              ? '画像生成中...'
+              : generatedImage
+              ? '顔を検出してオーバーレイ中...'
+              : 'プロンプトを入力してボタンを押すと画像生成'}
           </motion.p>
         </motion.div>
       </div>
