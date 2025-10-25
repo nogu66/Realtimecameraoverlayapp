@@ -20,6 +20,7 @@ export default function App() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceDetectorRef = useRef<FaceDetector | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const processedCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Initialize MediaPipe Face Detector
   useEffect(() => {
@@ -201,7 +202,6 @@ export default function App() {
     console.log('👤 Current face detections:', faceDetections.length);
 
     // Load generated image once and process green screen
-    let processedCanvas: HTMLCanvasElement | null = null;
     if (generatedImage) {
       const overlayImg = new Image();
       overlayImg.crossOrigin = 'anonymous';
@@ -225,6 +225,7 @@ export default function App() {
           const data = imageData.data;
 
           // Process pixels: make green background transparent
+          let greenPixelsRemoved = 0;
           for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i + 1];
@@ -235,14 +236,16 @@ export default function App() {
             if (g > 100 && g > r * 1.5 && g > b * 1.5) {
               // Make pixel transparent
               data[i + 3] = 0;
+              greenPixelsRemoved++;
             }
           }
 
           // Put processed image data back
           tempCtx.putImageData(imageData, 0, 0);
-          processedCanvas = tempCanvas;
+          processedCanvasRef.current = tempCanvas;
 
-          console.log('🎨 Green screen removed successfully');
+          console.log('🎨 Green screen removed successfully. Pixels removed:', greenPixelsRemoved);
+          console.log('📐 Processed canvas size:', tempCanvas.width, 'x', tempCanvas.height);
         }
       };
 
@@ -253,6 +256,9 @@ export default function App() {
 
       overlayImg.src = generatedImage;
       console.log('📥 Starting to load overlay image:', generatedImage);
+    } else {
+      processedCanvasRef.current = null;
+      console.log('🗑️ No generated image, clearing processed canvas');
     }
 
     // Animation loop for drawing overlays
@@ -267,19 +273,24 @@ export default function App() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // Draw processed image on each detected face
+      const processedCanvas = processedCanvasRef.current;
       if (processedCanvas && faceDetections.length > 0) {
-        faceDetections.forEach((detection: any) => {
+        console.log('🎭 Drawing overlay on', faceDetections.length, 'faces');
+        faceDetections.forEach((detection: any, index: number) => {
           const bbox = detection.boundingBox;
-          if (bbox && processedCanvas) {
+          if (bbox) {
             // Scale and draw processed image to fit face
             const x = bbox.originX;
             const y = bbox.originY;
             const width = bbox.width;
             const height = bbox.height;
 
+            console.log(`Face ${index}: x=${x}, y=${y}, w=${width}, h=${height}`);
             ctx.drawImage(processedCanvas, x, y, width, height);
           }
         });
+      } else if (!processedCanvas && generatedImage) {
+        console.log('⏳ Processed canvas not ready yet');
       }
 
       requestAnimationFrame(drawLoop);
