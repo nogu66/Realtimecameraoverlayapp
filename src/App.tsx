@@ -11,7 +11,8 @@ export default function App() {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [useFallback, setUseFallback] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDetectorReady, setIsDetectorReady] = useState(false);
 
@@ -166,12 +167,15 @@ export default function App() {
     };
   }, [isCameraReady, isDetectorReady, detectFaces]);
 
-  // Generate image using Weaver AI (Google Gemini 2.5 Flash Image) API
-  const handleGenerateImage = async () => {
-    if (!prompt.trim()) return;
+  // Generate 3 images using Weaver AI (Google Gemini 2.5 Flash Image) API
+  const handleGenerateImage = async (customPrompt?: string) => {
+    const actualPrompt = customPrompt || prompt;
+    if (!actualPrompt.trim()) return;
 
     setIsGenerating(true);
-    console.log('🎨 Starting image generation with prompt:', prompt);
+    setGeneratedImages([]); // Clear previous images
+    setSelectedImageIndex(0);
+    console.log('🎨 Starting 3 image generations with prompt:', actualPrompt);
 
     try {
       const apiKey = import.meta.env.VITE_WEAVER_AI_API_KEY;
@@ -180,10 +184,10 @@ export default function App() {
         throw new Error('VITE_WEAVER_AI_API_KEY is not set in environment variables');
       }
 
-      console.log('🔑 API Key found, making request...');
+      console.log('🔑 API Key found, making 3 parallel requests...');
 
       // Enhance prompt for face overlay with green screen background
-      const enhancedPrompt = `A close-up portrait of a ${prompt} face, front-facing view, centered, isolated subject on a bright green chroma key background (#00FF00), vivid green screen, face mask style, suitable for face overlay filter`;
+      const enhancedPrompt = `A close-up portrait of a ${actualPrompt} face, front-facing view, centered, isolated subject on a bright green chroma key background (#00FF00), vivid green screen, face mask style, suitable for face overlay filter`;
 
       console.log('✨ Enhanced prompt:', enhancedPrompt);
 
@@ -194,45 +198,60 @@ export default function App() {
         enable_sync_mode: true
       };
 
-      console.log('📤 Request body:', requestBody);
+      // Generate 3 images in parallel
+      const generateSingleImage = async (index: number) => {
+        console.log(`📤 Request ${index + 1}/3:`, requestBody);
 
-      const response = await fetch('https://api.wavespeed.ai/api/v3/google/gemini-2.5-flash-image/text-to-image', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(requestBody)
-      });
+        const response = await fetch('https://api.wavespeed.ai/api/v3/google/gemini-2.5-flash-image/text-to-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(requestBody)
+        });
 
-      console.log('📥 Response status:', response.status, response.statusText);
+        console.log(`📥 Response ${index + 1}/3 status:`, response.status, response.statusText);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('❌ API error response:', errorData);
-        throw new Error(`API request failed: ${response.status} ${response.statusText}. ${JSON.stringify(errorData)}`);
-      }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error(`❌ API error response ${index + 1}/3:`, errorData);
+          throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+        }
 
-      const data = await response.json();
-      console.log('✅ API response data:', data);
+        const data = await response.json();
+        console.log(`✅ API response ${index + 1}/3 data:`, data);
 
-      // Check if the generation was successful
-      if (data.data && data.data.outputs && data.data.outputs.length > 0) {
-        const imageUrl = data.data.outputs[0];
-        console.log('🖼️ Setting generated image URL:', imageUrl);
-        setGeneratedImage(imageUrl);
-      } else if (data.data && data.data.status === 'failed') {
-        console.error('❌ Server-side generation failed:', data.data);
-        throw new Error('Image generation failed on the server');
-      } else {
-        console.error('❌ Unexpected response structure:', data);
-        throw new Error('No image URL in response');
-      }
+        // Check if the generation was successful
+        if (data.data && data.data.outputs && data.data.outputs.length > 0) {
+          const imageUrl = data.data.outputs[0];
+          console.log(`🖼️ Image ${index + 1}/3 URL:`, imageUrl);
+          return imageUrl;
+        } else if (data.data && data.data.status === 'failed') {
+          console.error(`❌ Server-side generation ${index + 1}/3 failed:`, data.data);
+          throw new Error('Image generation failed on the server');
+        } else {
+          console.error(`❌ Unexpected response structure ${index + 1}/3:`, data);
+          throw new Error('No image URL in response');
+        }
+      };
+
+      // Generate 3 images in parallel
+      const imageUrls = await Promise.all([
+        generateSingleImage(0),
+        generateSingleImage(1),
+        generateSingleImage(2)
+      ]);
+
+      console.log('✅ All 3 images generated successfully:', imageUrls);
+      setGeneratedImages(imageUrls);
+      setSelectedImageIndex(0); // Select first image by default
     } catch (error) {
       console.error('💥 Image generation error:', error);
       // フォールバック: デモ用のダミー画像
       alert(`画像生成APIでエラーが発生しました: ${error instanceof Error ? error.message : 'Unknown error'}。ダミー画像を使用します。`);
-      setGeneratedImage('/dummy-overlay.jpg');
+      setGeneratedImages(['/dummy-overlay.jpg', '/dummy-overlay.jpg', '/dummy-overlay.jpg']);
+      setSelectedImageIndex(0);
     } finally {
       setIsGenerating(false);
       console.log('🏁 Image generation process completed');
@@ -241,13 +260,15 @@ export default function App() {
 
   // Process generated image (green screen removal) - only when image changes
   useEffect(() => {
-    if (!generatedImage) {
+    const selectedImage = generatedImages[selectedImageIndex];
+
+    if (!selectedImage) {
       processedCanvasRef.current = null;
       console.log('🗑️ [Image Processing] No generated image, clearing processed canvas');
       return;
     }
 
-    console.log('🖼️ [Image Processing] Loading overlay image:', generatedImage);
+    console.log('🖼️ [Image Processing] Loading overlay image:', selectedImage);
 
     const overlayImg = new Image();
     overlayImg.crossOrigin = 'anonymous';
@@ -303,11 +324,11 @@ export default function App() {
 
     overlayImg.onerror = (error) => {
       console.error('❌ [Image Processing] Failed to load overlay image:', error);
-      console.error('Image URL:', generatedImage);
+      console.error('Image URL:', selectedImage);
     };
 
-    overlayImg.src = generatedImage;
-  }, [generatedImage]);
+    overlayImg.src = selectedImage;
+  }, [generatedImages, selectedImageIndex]);
 
   // Draw overlay on detected faces - separate effect for drawing loop
   useEffect(() => {
@@ -449,12 +470,13 @@ export default function App() {
     }
   };
 
-  // Download generated image
+  // Download currently selected generated image
   const handleDownloadImage = async () => {
-    if (!generatedImage) return;
+    const selectedImage = generatedImages[selectedImageIndex];
+    if (!selectedImage) return;
 
     try {
-      const response = await fetch(generatedImage);
+      const response = await fetch(selectedImage);
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -534,7 +556,7 @@ export default function App() {
           </div>
 
           {/* Generated Image Preview with Download */}
-          {generatedImage && (
+          {generatedImages.length > 0 && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -544,7 +566,7 @@ export default function App() {
               <div className="relative">
                 <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#00AEEF] bg-black/50 backdrop-blur-sm">
                   <img
-                    src={generatedImage}
+                    src={generatedImages[selectedImageIndex]}
                     alt="Generated overlay"
                     className="w-full h-full object-cover"
                     onError={(e) => {
@@ -576,6 +598,35 @@ export default function App() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="flex flex-col items-center gap-6"
         >
+          {/* Generated Image Thumbnails */}
+          {generatedImages.length > 0 && (
+            <div className="w-full max-w-md flex justify-center gap-3">
+              {generatedImages.map((imageUrl, index) => (
+                <motion.button
+                  key={index}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setSelectedImageIndex(index)}
+                  disabled={isGenerating}
+                  className={`flex-1 aspect-square rounded-2xl backdrop-blur-lg border-3 transition-all overflow-hidden ${
+                    selectedImageIndex === index
+                      ? 'border-[#00AEEF] ring-2 ring-[#00AEEF]/50'
+                      : 'border-white/20 hover:border-white/40'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <img
+                    src={imageUrl}
+                    alt={`Generated overlay ${index + 1}`}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      console.error(`Thumbnail ${index + 1} failed to load`);
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                </motion.button>
+              ))}
+            </div>
+          )}
+
           {/* Text Input with Generate Button */}
           <div className="w-full max-w-md relative flex gap-3">
             <div className="relative flex-1">
@@ -587,7 +638,7 @@ export default function App() {
                     handleGenerateImage();
                   }
                 }}
-                placeholder="例: 猫、犬、パンダ、ロボット…"
+                placeholder="ex: cat, dog, panda, robot..."
                 className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
               />
             </div>
@@ -631,10 +682,10 @@ export default function App() {
             className="text-white/70 text-center text-sm px-4"
           >
             {isGenerating
-              ? 'AI画像を生成中...'
-              : generatedImage
-              ? '顔にオーバーレイ中 - カメラに顔を向けてください'
-              : '動物や物の名前を入力して顔フィルターを生成'}
+              ? 'generating 3 AI images...'
+              : generatedImages.length > 0
+              ? `${generatedImages.length} face overlays generated - tap to switch`
+              : 'enter prompt to generate 3 face overlays'}
           </motion.p>
         </motion.div>
       </div>
