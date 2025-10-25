@@ -492,12 +492,6 @@ export default function App() {
     }
   };
 
-  // Load local image from public/image/
-  const handleLoadLocalImage = (filename: string) => {
-    const localImagePath = `/image/${filename}`;
-    setGeneratedImage(localImagePath);
-    console.log('📂 Loading local image:', localImagePath);
-  };
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black">
@@ -638,6 +632,7 @@ export default function App() {
                     handleGenerateImage();
                   }
                 }}
+
                 placeholder="ex: cat, dog, panda, robot..."
                 className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
               />
