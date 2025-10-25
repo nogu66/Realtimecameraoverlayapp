@@ -301,9 +301,9 @@ export default function App() {
           const g = data[i + 1];
           const b = data[i + 2];
 
-          // Detect green color (adjust thresholds as needed)
+          // Detect green color (adjusted thresholds for broader green screen removal)
           // Check if green is dominant and red/blue are low
-          if (g > 100 && g > r * 1.5 && g > b * 1.5) {
+          if (g > 80 && g > r * 1.3 && g > b * 1.3) {
             // Make pixel transparent
             data[i + 3] = 0;
             greenPixelsRemoved++;
