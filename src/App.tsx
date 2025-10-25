@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, Sparkles, Wand2 } from 'lucide-react';
+import { Camera, Sparkles, Wand2, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from './components/ui/input';
 import { Button } from './components/ui/button';
@@ -13,7 +13,7 @@ export default function App() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [faceDetections, setFaceDetections] = useState<any[]>([]);
+  const [isDetectorReady, setIsDetectorReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -21,11 +21,14 @@ export default function App() {
   const faceDetectorRef = useRef<FaceDetector | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const processedCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastDetectionTimeRef = useRef<number>(0);
+  const faceDetectionsRef = useRef<any[]>([]);
 
   // Initialize MediaPipe Face Detector
   useEffect(() => {
     const initFaceDetector = async () => {
       try {
+        console.log('🔧 [Init] Starting MediaPipe Face Detector initialization...');
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
@@ -37,8 +40,11 @@ export default function App() {
           runningMode: 'VIDEO'
         });
         faceDetectorRef.current = detector;
+        setIsDetectorReady(true);
+        console.log('✅ [Init] Face Detector initialized successfully');
       } catch (error) {
-        console.error('Failed to initialize face detector:', error);
+        console.error('❌ [Init] Failed to initialize face detector:', error);
+        setIsDetectorReady(false);
       }
     };
 
@@ -49,6 +55,7 @@ export default function App() {
   useEffect(() => {
     const startCamera = async () => {
       try {
+        console.log('📹 [Init] Requesting camera access...');
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 1280, height: 720 }
         });
@@ -56,12 +63,14 @@ export default function App() {
           videoRef.current.srcObject = stream;
           setIsCameraReady(true);
           setUseFallback(false);
+          console.log('✅ [Init] Camera ready');
         }
       } catch (err) {
-        console.error('Camera access error:', err);
+        console.error('❌ [Init] Camera access error:', err);
         // Use fallback mode with placeholder image
         setUseFallback(true);
         setIsCameraReady(true);
+        console.log('⚠️ [Init] Using fallback mode');
       }
     };
 
@@ -78,36 +87,84 @@ export default function App() {
     };
   }, []);
 
-  // Face detection loop
+  // Face detection loop - throttled to 33ms (30fps) for smooth tracking
   const detectFaces = useCallback(async () => {
-    if (!faceDetectorRef.current || !videoRef.current || !isCameraReady || useFallback) {
-      animationFrameRef.current = requestAnimationFrame(detectFaces);
-      return;
-    }
+    const DETECTION_INTERVAL = 33; // ~30fps for smooth face tracking
 
-    const video = videoRef.current;
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      try {
-        const detections = faceDetectorRef.current.detectForVideo(video, performance.now());
-        setFaceDetections(detections.detections || []);
-      } catch (error) {
-        console.error('Face detection error:', error);
+    const runDetection = () => {
+      if (!faceDetectorRef.current || !videoRef.current || !isCameraReady || useFallback) {
+        animationFrameRef.current = requestAnimationFrame(runDetection);
+        return;
       }
-    }
 
-    animationFrameRef.current = requestAnimationFrame(detectFaces);
+      const now = performance.now();
+      const timeSinceLastDetection = now - lastDetectionTimeRef.current;
+
+      // Only run detection every 100ms
+      if (timeSinceLastDetection >= DETECTION_INTERVAL) {
+        const video = videoRef.current;
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          try {
+            const detections = faceDetectorRef.current.detectForVideo(video, now);
+            const faceCount = detections.detections?.length || 0;
+
+            // Debug: Log face detection results every 2 seconds
+            if (Math.floor(now / 2000) !== Math.floor(lastDetectionTimeRef.current / 2000)) {
+              console.log('👁️ [Face Detection @30fps]', faceCount, 'face(s) detected');
+              if (faceCount > 0) {
+                detections.detections.forEach((det: any, idx: number) => {
+                  const bbox = det.boundingBox;
+                  if (bbox) {
+                    console.log(`  Face ${idx}: x=${Math.round(bbox.originX)}, y=${Math.round(bbox.originY)}, w=${Math.round(bbox.width)}, h=${Math.round(bbox.height)}`);
+                  }
+                });
+              }
+            }
+
+            faceDetectionsRef.current = detections.detections || [];
+            lastDetectionTimeRef.current = now;
+          } catch (error) {
+            console.error('❌ Face detection error:', error);
+          }
+        } else {
+          // Debug: Log when video is not ready
+          if (Math.floor(now / 5000) !== Math.floor(lastDetectionTimeRef.current / 5000)) {
+            console.log('⏸️ [Face Detection] Video not ready, readyState:', video.readyState);
+          }
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(runDetection);
+    };
+
+    runDetection();
   }, [isCameraReady, useFallback]);
 
   useEffect(() => {
-    if (isCameraReady && faceDetectorRef.current) {
+    console.log('🔍 [Init] Face detection loop check:', {
+      isCameraReady,
+      hasFaceDetector: !!faceDetectorRef.current,
+      useFallback,
+      isDetectorReady
+    });
+
+    if (isCameraReady && isDetectorReady && faceDetectorRef.current) {
+      console.log('🚀 [Init] Starting face detection loop');
       detectFaces();
+    } else {
+      console.log('⏸️ [Init] Face detection loop NOT started:', {
+        isCameraReady,
+        hasFaceDetector: !!faceDetectorRef.current,
+        isDetectorReady
+      });
     }
     return () => {
       if (animationFrameRef.current) {
+        console.log('🛑 [Init] Cancelling face detection loop');
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isCameraReady, detectFaces]);
+  }, [isCameraReady, isDetectorReady, detectFaces]);
 
   // Generate image using Weaver AI (Google Gemini 2.5 Flash Image) API
   const handleGenerateImage = async () => {
@@ -182,7 +239,77 @@ export default function App() {
     }
   };
 
-  // Draw overlay on detected faces
+  // Process generated image (green screen removal) - only when image changes
+  useEffect(() => {
+    if (!generatedImage) {
+      processedCanvasRef.current = null;
+      console.log('🗑️ [Image Processing] No generated image, clearing processed canvas');
+      return;
+    }
+
+    console.log('🖼️ [Image Processing] Loading overlay image:', generatedImage);
+
+    const overlayImg = new Image();
+    overlayImg.crossOrigin = 'anonymous';
+
+    overlayImg.onload = () => {
+      console.log('✅ [Image Processing] Image loaded, starting green screen removal...');
+
+      // Create a temporary canvas to process the image
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+
+      if (tempCtx) {
+        tempCanvas.width = overlayImg.width;
+        tempCanvas.height = overlayImg.height;
+
+        console.log(`📐 [Image Processing] Original image size: ${overlayImg.width}x${overlayImg.height}`);
+
+        // Draw original image
+        tempCtx.drawImage(overlayImg, 0, 0);
+
+        // Get image data
+        const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imageData.data;
+        const totalPixels = data.length / 4;
+
+        // Process pixels: make green background transparent
+        let greenPixelsRemoved = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+
+          // Detect green color (adjust thresholds as needed)
+          // Check if green is dominant and red/blue are low
+          if (g > 100 && g > r * 1.5 && g > b * 1.5) {
+            // Make pixel transparent
+            data[i + 3] = 0;
+            greenPixelsRemoved++;
+          }
+        }
+
+        // Put processed image data back
+        tempCtx.putImageData(imageData, 0, 0);
+        processedCanvasRef.current = tempCanvas;
+
+        const removalPercentage = ((greenPixelsRemoved / totalPixels) * 100).toFixed(1);
+        console.log(`🎨 [Image Processing] Green screen removed: ${greenPixelsRemoved.toLocaleString()}/${totalPixels.toLocaleString()} pixels (${removalPercentage}%)`);
+        console.log('✅ [Image Processing] Processed canvas ready for overlay');
+      } else {
+        console.error('❌ [Image Processing] Failed to get canvas context');
+      }
+    };
+
+    overlayImg.onerror = (error) => {
+      console.error('❌ [Image Processing] Failed to load overlay image:', error);
+      console.error('Image URL:', generatedImage);
+    };
+
+    overlayImg.src = generatedImage;
+  }, [generatedImage]);
+
+  // Draw overlay on detected faces - separate effect for drawing loop
   useEffect(() => {
     const canvas = overlayCanvasRef.current;
     const video = videoRef.current;
@@ -198,70 +325,11 @@ export default function App() {
       return;
     }
 
-    console.log('🖼️ Setting up overlay with generatedImage:', generatedImage);
-    console.log('👤 Current face detections:', faceDetections.length);
-
-    // Load generated image once and process green screen
-    if (generatedImage) {
-      const overlayImg = new Image();
-      overlayImg.crossOrigin = 'anonymous';
-
-      overlayImg.onload = () => {
-        console.log('✅ Overlay image loaded successfully:', generatedImage);
-
-        // Create a temporary canvas to process the image
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-
-        if (tempCtx) {
-          tempCanvas.width = overlayImg.width;
-          tempCanvas.height = overlayImg.height;
-
-          // Draw original image
-          tempCtx.drawImage(overlayImg, 0, 0);
-
-          // Get image data
-          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          const data = imageData.data;
-
-          // Process pixels: make green background transparent
-          let greenPixelsRemoved = 0;
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-
-            // Detect green color (adjust thresholds as needed)
-            // Check if green is dominant and red/blue are low
-            if (g > 100 && g > r * 1.5 && g > b * 1.5) {
-              // Make pixel transparent
-              data[i + 3] = 0;
-              greenPixelsRemoved++;
-            }
-          }
-
-          // Put processed image data back
-          tempCtx.putImageData(imageData, 0, 0);
-          processedCanvasRef.current = tempCanvas;
-
-          console.log('🎨 Green screen removed successfully. Pixels removed:', greenPixelsRemoved);
-          console.log('📐 Processed canvas size:', tempCanvas.width, 'x', tempCanvas.height);
-        }
-      };
-
-      overlayImg.onerror = (error) => {
-        console.error('❌ Failed to load overlay image:', error);
-        console.error('Image URL:', generatedImage);
-      };
-
-      overlayImg.src = generatedImage;
-      console.log('📥 Starting to load overlay image:', generatedImage);
-    } else {
-      processedCanvasRef.current = null;
-      console.log('🗑️ No generated image, clearing processed canvas');
-    }
+    console.log('🎬 Starting drawing loop');
 
     // Animation loop for drawing overlays
+    let frameCount = 0;
+    let lastLogTime = 0;
     const drawLoop = () => {
       // Match canvas size to video
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
@@ -274,13 +342,56 @@ export default function App() {
 
       // Draw processed image on each detected face
       const processedCanvas = processedCanvasRef.current;
-      if (processedCanvas && faceDetections.length > 0) {
-        console.log('🎭 Drawing overlay on', faceDetections.length, 'faces');
-        faceDetections.forEach((detection: any, index: number) => {
+      const currentDetections = faceDetectionsRef.current;
+      const now = performance.now();
+
+      // Debug log every 2 seconds
+      const shouldLog = (now - lastLogTime) > 2000;
+
+      if (shouldLog) {
+        const hasProcessedCanvas = !!processedCanvas;
+        const detectionCount = currentDetections.length;
+        console.log('🖼️ [Overlay Drawing]', {
+          hasProcessedCanvas,
+          processedCanvasSize: hasProcessedCanvas ? `${processedCanvas.width}x${processedCanvas.height}` : 'N/A',
+          detectionCount,
+          canvasSize: `${canvas.width}x${canvas.height}`
+        });
+        lastLogTime = now;
+      }
+
+      // Draw debug rectangles for face detection (always visible for debugging)
+      if (currentDetections.length > 0) {
+        ctx.strokeStyle = '#00ff00'; // Green for detected faces
+        ctx.lineWidth = 2;
+
+        currentDetections.forEach((detection: any) => {
+          const bbox = detection.boundingBox;
+          if (bbox) {
+            // Draw detection bounding box
+            ctx.strokeRect(bbox.originX, bbox.originY, bbox.width, bbox.height);
+
+            // Draw scaled overlay area
+            const scaleFactor = 2.0;
+            const scaledWidth = bbox.width * scaleFactor;
+            const scaledHeight = bbox.height * scaleFactor;
+            const x = bbox.originX - (scaledWidth - bbox.width) / 2;
+            const y = bbox.originY - (scaledHeight - bbox.height) / 2;
+
+            ctx.strokeStyle = '#ff00ff'; // Magenta for overlay area
+            ctx.strokeRect(x, y, scaledWidth, scaledHeight);
+          }
+        });
+      }
+
+      if (processedCanvas && currentDetections.length > 0) {
+        let drawCount = 0;
+
+        currentDetections.forEach((detection: any) => {
           const bbox = detection.boundingBox;
           if (bbox) {
             // Scale factor to ensure face is completely covered
-            const scaleFactor = 2.0; // 1.8x larger to fully cover the face
+            const scaleFactor = 2.0;
 
             const scaledWidth = bbox.width * scaleFactor;
             const scaledHeight = bbox.height * scaleFactor;
@@ -289,23 +400,36 @@ export default function App() {
             const x = bbox.originX - (scaledWidth - bbox.width) / 2;
             const y = bbox.originY - (scaledHeight - bbox.height) / 2;
 
-            console.log(`Face ${index}: original=${bbox.width}x${bbox.height}, scaled=${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`);
             ctx.drawImage(processedCanvas, x, y, scaledWidth, scaledHeight);
+            drawCount++;
           }
         });
-      } else if (!processedCanvas && generatedImage) {
-        console.log('⏳ Processed canvas not ready yet');
+
+        if (shouldLog && drawCount > 0) {
+          console.log(`✅ [Overlay Drawing] Drew ${drawCount} overlay(s) successfully`);
+        }
+      } else {
+        // Debug: Why is overlay not being drawn?
+        if (shouldLog) {
+          if (!processedCanvas) {
+            console.log('⚠️ [Overlay Drawing] No processed canvas available');
+          } else if (currentDetections.length === 0) {
+            console.log('⚠️ [Overlay Drawing] No face detections available');
+          }
+        }
       }
 
+      frameCount++;
       requestAnimationFrame(drawLoop);
     };
 
     const animId = requestAnimationFrame(drawLoop);
 
     return () => {
+      console.log('🛑 Stopping drawing loop');
       cancelAnimationFrame(animId);
     };
-  }, [faceDetections, generatedImage]);
+  }, []); // Empty dependency array - only run once on mount
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
@@ -323,6 +447,34 @@ export default function App() {
         setTimeout(() => setCapturedImage(null), 2000);
       }
     }
+  };
+
+  // Download generated image
+  const handleDownloadImage = async () => {
+    if (!generatedImage) return;
+
+    try {
+      const response = await fetch(generatedImage);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `overlay-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      console.log('✅ Image downloaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to download image:', error);
+    }
+  };
+
+  // Load local image from public/image/
+  const handleLoadLocalImage = (filename: string) => {
+    const localImagePath = `/image/${filename}`;
+    setGeneratedImage(localImagePath);
+    console.log('📂 Loading local image:', localImagePath);
   };
 
   return (
@@ -381,26 +533,36 @@ export default function App() {
             <h1 className="text-white tracking-wide">AI Camera Filter</h1>
           </div>
 
-          {/* Generated Image Preview */}
+          {/* Generated Image Preview with Download */}
           {generatedImage && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.3 }}
-              className="relative"
+              className="flex items-center gap-2"
             >
-              <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#00AEEF] bg-black/50 backdrop-blur-sm">
-                <img
-                  src={generatedImage}
-                  alt="Generated overlay"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    console.error('Preview image failed to load');
-                    e.currentTarget.style.display = 'none';
-                  }}
-                />
+              <div className="relative">
+                <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#00AEEF] bg-black/50 backdrop-blur-sm">
+                  <img
+                    src={generatedImage}
+                    alt="Generated overlay"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      console.error('Preview image failed to load');
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                </div>
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#00AEEF] rounded-full animate-pulse" />
               </div>
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#00AEEF] rounded-full animate-pulse" />
+              <Button
+                onClick={handleDownloadImage}
+                size="sm"
+                className="bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white h-8 w-8 p-0"
+                title="Download image to public/image/"
+              >
+                <Download className="w-4 h-4" />
+              </Button>
             </motion.div>
           )}
         </motion.div>
