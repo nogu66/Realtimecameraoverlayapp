@@ -582,7 +582,11 @@ export default function App() {
               <Input
                 value={prompt}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
-                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleGenerateImage()}
+                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                    handleGenerateImage();
+                  }
+                }}
                 placeholder="例: 猫、犬、パンダ、ロボット…"
                 className="w-full bg-white/10 backdrop-blur-lg border-white/20 text-white placeholder:text-white/50 rounded-full px-6 py-6 focus:border-[#00AEEF] focus:ring-[#00AEEF]/50 transition-all"
               />
