@@ -610,7 +610,7 @@ export default function App() {
           </div>
 
           {/* Capture Button */}
-          <motion.button
+          {/* <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={handleCapture}
             disabled={!isCameraReady}
@@ -622,7 +622,7 @@ export default function App() {
               className="absolute inset-2 rounded-full bg-[#00AEEF]"
             />
             <Camera className="w-8 h-8 text-white relative z-10" />
-          </motion.button>
+          </motion.button> */}
 
           {/* Helper Text */}
           <motion.p
